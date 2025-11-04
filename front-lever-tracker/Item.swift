@@ -8,11 +8,17 @@
 import Foundation
 import SwiftData
 
+// MARK: - Models
+
 @Model
-final class Item {
-    var timestamp: Date
+class WorkoutEntry {
+    var date: Date
+    var timeUnderTension: TimeInterval
+    var poseIndex: Int
     
-    init(timestamp: Date) {
-        self.timestamp = timestamp
+    init(date: Date, timeUnderTension: TimeInterval, poseIndex: Int) {
+        self.date = date
+        self.timeUnderTension = timeUnderTension
+        self.poseIndex = poseIndex
     }
 }
