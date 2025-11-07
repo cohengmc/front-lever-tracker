@@ -9,6 +9,7 @@ import SwiftUI
 import SwiftData
 
 struct HistoryView: View {
+    @Environment(\.modelContext) private var modelContext
     let entries: [WorkoutEntry]
     
     var todayTotal: TimeInterval {
@@ -24,27 +25,52 @@ struct HistoryView: View {
         return total / Double(days)
     }
     
+    // Group entries by date
+    var groupedEntries: [(date: Date, entries: [WorkoutEntry])] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: entries) { entry in
+            calendar.startOfDay(for: entry.date)
+        }
+        
+        return grouped.map { (date: $0.key, entries: $0.value) }
+            .sorted { $0.date > $1.date } // Most recent first
+    }
+    
     var body: some View {
         List {
-            Section("Statistics") {
-                HStack {
-                    Text("Today's Total")
-                    Spacer()
-                    Text(timeString(from: todayTotal))
-                        .fontWeight(.bold)
-                }
+            HStack {
+//                Section("Activity Heatmap") {
+                    DailyTensionHeatmap(entries: entries)
+                        .padding(.vertical, 8)
+//                }
                 
-                HStack {
-                    Text("Daily Average")
-                    Spacer()
-                    Text(timeString(from: dailyAverage))
-                        .fontWeight(.bold)
+                VStack{
+                    HStack {
+                        Text("Today's Total")
+                        Spacer()
+                        Text(timeString(from: todayTotal))
+                            .fontWeight(.bold)
+                    }
+                    
+                    HStack {
+                        Text("Daily Average")
+                        Spacer()
+                        Text(timeString(from: dailyAverage))
+                            .fontWeight(.bold)
+                    }
                 }
             }
             
-            Section("Workout History") {
-                ForEach(entries) { entry in
-                    WorkoutEntryCard(entry: entry)
+            
+            ForEach(groupedEntries, id: \.date) { dateGroup in
+                Section {
+                    ForEach(dateGroup.entries) { entry in
+                        EntryRow(entry: entry, modelContext: modelContext)
+                    }
+                } header: {
+                    Text(dateGroup.date, style: .date)
+                        .font(.headline)
+                        .fontWeight(.bold)
                 }
             }
         }
