@@ -18,11 +18,15 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             if showingTimer {
-                TimerView(onSave: saveEntry, onCancel: { showingTimer = true })
+                TimerView(
+                    onSave: saveEntry,
+                    onCancel: { showingTimer = true },
+                    initialAngles: getMostRecentAngles()
+                )
                     .toolbar {
                         ToolbarItem(placement: .navigationBarTrailing) {
                             Button(action: { showingTimer = false }) {
-                                Label("History", systemImage: "clock")
+                                Label("History", systemImage: "clock.arrow.circlepath")
                             }
                         }
                     }
@@ -39,10 +43,17 @@ struct ContentView: View {
         }
     }
     
-    private func saveEntry(time: TimeInterval, poseIndex: Int) {
-        let entry = WorkoutEntry(date: Date(), timeUnderTension: time, poseIndex: poseIndex)
+    private func saveEntry(time: TimeInterval, jointAngles: [Float]) {
+        let entry = WorkoutEntry(date: Date(), timeUnderTension: time, jointAngles: jointAngles)
         modelContext.insert(entry)
         showingTimer = true
+    }
+    
+    private func getMostRecentAngles() -> [Float]? {
+        guard let mostRecent = entries.first, mostRecent.jointAngles.count == 4 else {
+            return nil
+        }
+        return mostRecent.jointAngles
     }
 }
 
@@ -54,11 +65,37 @@ struct TimerView: View {
     @State private var elapsedTime: TimeInterval = 0
     @State private var displayTime: TimeInterval = 0
     @State private var timer: Timer?
-    @State private var selectedPoseIndex = 0
-    @State private var showPoseSelection = false
     
-    let onSave: (TimeInterval, Int) -> Void
+    // Joint angles state - initialized from most recent entry or defaults
+    @State private var blueAngle: Angle
+    @State private var greenAngle: Angle
+    @State private var purpleAngle: Angle
+    @State private var yellowAngle: Angle
+    
+    // Continuous adjustment state
+    @State private var adjustmentTimer: Timer?
+    @State private var isAdjusting = false
+    
+    let onSave: (TimeInterval, [Float]) -> Void
     let onCancel: () -> Void
+    
+    init(onSave: @escaping (TimeInterval, [Float]) -> Void, onCancel: @escaping () -> Void, initialAngles: [Float]? = nil) {
+        self.onSave = onSave
+        self.onCancel = onCancel
+        
+        // Use initial angles if provided, otherwise use defaults
+        if let angles = initialAngles, angles.count == 4 {
+            _blueAngle = State(initialValue: Angle(degrees: Double(angles[0])))
+            _greenAngle = State(initialValue: Angle(degrees: Double(angles[1])))
+            _purpleAngle = State(initialValue: Angle(degrees: Double(angles[2])))
+            _yellowAngle = State(initialValue: Angle(degrees: Double(angles[3])))
+        } else {
+            _blueAngle = State(initialValue: Angle(degrees: 235.0))
+            _greenAngle = State(initialValue: Angle(degrees: -145.0))
+            _purpleAngle = State(initialValue: Angle(degrees: -35.0))
+            _yellowAngle = State(initialValue: Angle(degrees: 70.0))
+        }
+    }
     
     enum TimerState {
         case ready, countdown, running, stopped
@@ -83,15 +120,36 @@ struct TimerView: View {
                     .foregroundColor(timerState == .running ? .green : .primary)
             }
             
-            Spacer()
+            //Spacer()
             
             // Control Buttons
             if timerState == .stopped {
                 adjustmentButtons
                 
-                if showPoseSelection {
-                    poseSelectionView
+                Text("Adjust Positioning")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                ManipulableLinesView(
+                    blueAngle: $blueAngle,
+                    greenAngle: $greenAngle,
+                    purpleAngle: $purpleAngle,
+                    yellowAngle: $yellowAngle
+                )
+                .frame(height: 200)
+                
+                Spacer()
+                
+                Button(action: saveWorkout) {
+                    Text("Save Workout")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.blue)
+                        .cornerRadius(10)
                 }
+                .padding(.horizontal)
             }
             
             controlButtons
@@ -102,68 +160,27 @@ struct TimerView: View {
     }
     
     private var adjustmentButtons: some View {
-        HStack(spacing: 40) {
-            Button(action: { adjustTime(-0.1) }) {
-                Image(systemName: "minus.circle.fill")
-                    .font(.system(size: 50))
-                    .foregroundColor(.red)
-            }
+        HStack(spacing:24) {
+            ContinuousAdjustButton(
+                action: { adjustTime(-0.1) },
+                icon: "minus.circle.fill",
+                color: .red,
+                onPressStart: { startContinuousAdjustment(-0.1) },
+                onPressEnd: { stopContinuousAdjustment() }
+            )
             
             Text("Adjust Time")
-                .font(.headline)
-            
-            Button(action: { adjustTime(0.1) }) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 50))
-                    .foregroundColor(.green)
-            }
-        }
-        .padding()
-    }
-    
-    private var poseSelectionView: some View {
-        VStack(spacing: 20) {
-            Text("Select Pose")
                 .font(.title2)
-                .fontWeight(.semibold)
+                .fontWeight(.bold)
             
-            // Magnified selected pose
-            PoseImageView(index: selectedPoseIndex, size: 200)
-            
-            // Carousel
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 15) {
-                    ForEach(0..<6) { index in
-                        PoseImageView(index: index, size: 80)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(selectedPoseIndex == index ? Color.blue : Color.clear, lineWidth: 3)
-                            )
-                            .onTapGesture {
-                                withAnimation {
-                                    selectedPoseIndex = index
-                                }
-                            }
-                    }
-                }
-                .padding(.horizontal)
-            }
-            .frame(height: 100)
-            
-            Button(action: saveWorkout) {
-                Text("Save Workout")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.blue)
-                    .cornerRadius(10)
-            }
-            .padding(.horizontal)
+            ContinuousAdjustButton(
+                action: { adjustTime(0.1) },
+                icon: "plus.circle.fill",
+                color: .green,
+                onPressStart: { startContinuousAdjustment(0.1) },
+                onPressEnd: { stopContinuousAdjustment() }
+            )
         }
-        .padding(.vertical)
-        .background(Color(.systemGray6))
-        .cornerRadius(15)
         .padding()
     }
     
@@ -187,16 +204,6 @@ struct TimerView: View {
                         .foregroundColor(.white)
                         .frame(width: 200, height: 60)
                         .background(Color.red)
-                        .cornerRadius(15)
-                }
-            } else if timerState == .stopped && !showPoseSelection {
-                Button(action: { showPoseSelection = true }) {
-                    Text("Next")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .frame(width: 200, height: 60)
-                        .background(Color.blue)
                         .cornerRadius(15)
                 }
             }
@@ -236,18 +243,44 @@ struct TimerView: View {
         displayTime = max(0, displayTime + amount)
     }
     
+    private func startContinuousAdjustment(_ amount: TimeInterval) {
+        // Start repeating timer for continuous adjustment
+        // Note: Initial adjustment is already done by the button's action
+        adjustmentTimer?.invalidate()
+        adjustmentTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            adjustTime(amount)
+        }
+        isAdjusting = true
+    }
+    
+    private func stopContinuousAdjustment() {
+        adjustmentTimer?.invalidate()
+        adjustmentTimer = nil
+        isAdjusting = false
+    }
+    
     private func saveWorkout() {
-        onSave(displayTime, selectedPoseIndex)
+        let jointAngles: [Float] = [
+            Float(blueAngle.degrees),
+            Float(greenAngle.degrees),
+            Float(purpleAngle.degrees),
+            Float(yellowAngle.degrees)
+        ]
+        onSave(displayTime, jointAngles)
         resetTimer()
     }
     
     private func resetTimer() {
+        stopContinuousAdjustment()
         timerState = .ready
         elapsedTime = 0
         displayTime = 0
         countdown = 3
-        showPoseSelection = false
-        selectedPoseIndex = 0
+        // Reset angles to default values
+        blueAngle = Angle(degrees: 235.0)
+        greenAngle = Angle(degrees: -145.0)
+        purpleAngle = Angle(degrees: -35.0)
+        yellowAngle = Angle(degrees: 70.0)
     }
     
     private func timeString(from timeInterval: TimeInterval) -> String {
@@ -258,112 +291,36 @@ struct TimerView: View {
     }
 }
 
-// MARK: - Pose Image View
+// MARK: - Continuous Adjust Button
 
-struct PoseImageView: View {
-    let index: Int
-    let size: CGFloat
+struct ContinuousAdjustButton: View {
+    let action: () -> Void
+    let icon: String
+    let color: Color
+    let onPressStart: () -> Void
+    let onPressEnd: () -> Void
+    
+    @State private var isPressed = false
     
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.blue.opacity(0.2))
-            
-            VStack {
-                Image(systemName: poseIcon(for: index))
-                    .font(.system(size: size * 0.4))
-                    .foregroundColor(.blue)
-                
-                Text(poseName(for: index))
-                    .font(.caption)
-                    .fontWeight(.semibold)
-            }
-        }
-        .frame(width: size, height: size)
-    }
-    
-    private func poseIcon(for index: Int) -> String {
-        let icons = ["figure.stand", "figure.arms.open", "figure.flexibility", 
-                     "figure.core.training", "figure.mind.and.body", "figure.strengthtraining.traditional"]
-        return icons[index]
-    }
-    
-    private func poseName(for index: Int) -> String {
-        ["Tuck", "Advanced Tuck", "Straddle", "Half Lay", "Full Lay", "One Arm"][index]
-    }
-}
-
-// MARK: - History View
-
-struct HistoryView: View {
-    let entries: [WorkoutEntry]
-    
-    var todayTotal: TimeInterval {
-        let today = Calendar.current.startOfDay(for: Date())
-        return entries.filter { Calendar.current.startOfDay(for: $0.date) == today }
-            .reduce(0) { $0 + $1.timeUnderTension }
-    }
-    
-    var dailyAverage: TimeInterval {
-        guard !entries.isEmpty else { return 0 }
-        let total = entries.reduce(0) { $0 + $1.timeUnderTension }
-        let days = Set(entries.map { Calendar.current.startOfDay(for: $0.date) }).count
-        return total / Double(days)
-    }
-    
-    var body: some View {
-        List {
-            Section("Statistics") {
-                HStack {
-                    Text("Today's Total")
-                    Spacer()
-                    Text(timeString(from: todayTotal))
-                        .fontWeight(.bold)
-                }
-                
-                HStack {
-                    Text("Daily Average")
-                    Spacer()
-                    Text(timeString(from: dailyAverage))
-                        .fontWeight(.bold)
-                }
-            }
-            
-            Section("Workout History") {
-                ForEach(entries) { entry in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(entry.date, style: .date)
-                                .font(.headline)
-                            Text(entry.date, style: .time)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        VStack(alignment: .trailing) {
-                            Text(timeString(from: entry.timeUnderTension))
-                                .font(.headline)
-                            Text(poseName(for: entry.poseIndex))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+        Image(systemName: icon)
+            .font(.system(size: 45))
+            .foregroundColor(color)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !isPressed {
+                            isPressed = true
+                            action() // Initial tap
+                            onPressStart() // Start continuous adjustment
                         }
                     }
-                }
-            }
-        }
-        .navigationTitle("History")
-    }
-    
-    private func timeString(from timeInterval: TimeInterval) -> String {
-        let minutes = Int(timeInterval) / 60
-        let seconds = Int(timeInterval) % 60
-        return String(format: "%02d:%02d", minutes, seconds)
-    }
-    
-    private func poseName(for index: Int) -> String {
-        ["Tuck", "Advanced Tuck", "Straddle", "Half Lay", "Full Lay", "One Arm"][index]
+                    .onEnded { _ in
+                        isPressed = false
+                        onPressEnd()
+                    }
+            )
     }
 }
 
